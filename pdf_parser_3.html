@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ระบบสรุปคำสั่งอาหารผู้ป่วยประจำวัน</title>
+<link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<style>
+body{font-family:'Kanit',sans-serif;background:#f3f4f6}
+.drag-active{border-color:#3b82f6!important;background:#eff6ff!important}
+.loader{border:4px solid #f3f3f3;border-top:4px solid #3b82f6;border-radius:50%;width:40px;height:40px;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+input.num{width:4.5rem;text-align:center;border:1px solid #e5e7eb;border-radius:.375rem;padding:.15rem}
+input.lbl{width:100%;border:1px solid #e5e7eb;border-radius:.375rem;padding:.15rem .4rem}
+</style>
+</head>
+<body class="text-gray-800 antialiased p-4 md:p-8">
+<div class="max-w-4xl mx-auto space-y-6">
+
+<div class="bg-white rounded-2xl shadow-sm p-6 flex items-center justify-between flex-wrap gap-3">
+  <div>
+    <h1 class="text-2xl font-semibold text-blue-800">ระบบประมวลผลคำสั่งอาหารผู้ป่วย</h1>
+    <p class="text-gray-500 text-sm mt-1">อัพโหลด PDF สรุปรายการอาหารจากระบบ HIS เพื่อสรุปยอดตามแบบฟอร์ม</p>
+  </div>
+  <div class="bg-blue-100 text-blue-700 px-4 py-2 rounded-lg font-medium">วันที่: <span id="currentDate"></span></div>
+</div>
+
+<div id="uploadZone" class="bg-white rounded-2xl shadow-sm border-2 border-dashed border-gray-300 p-10 text-center hover:bg-gray-50 cursor-pointer">
+  <input type="file" id="fileInput" accept="application/pdf" class="hidden">
+  <p><span class="text-blue-600 font-medium">คลิกเพื่ออัพโหลด</span> หรือลากไฟล์ PDF มาวางที่นี่</p>
+</div>
+
+<div id="loadingIndicator" class="hidden bg-white rounded-2xl shadow-sm p-10 flex flex-col items-center space-y-4">
+  <div class="loader"></div><p class="text-blue-600 font-medium animate-pulse">กำลังสกัดข้อมูลจาก PDF...</p>
+</div>
+
+<div id="resultSection" class="hidden space-y-6">
+  <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+    <div class="px-6 py-4 border-b bg-gray-50 flex justify-between items-center flex-wrap gap-3">
+      <div>
+        <h2 class="text-lg font-semibold">สรุปยอดอาหารผู้ป่วย</h2>
+        <p id="metaInfo" class="text-xs text-gray-500"></p>
+      </div>
+      <div class="flex gap-2">
+        <button id="btnExportExcel" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium">Export Excel</button>
+        <button id="btnSendGas" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium">ส่งเข้าระบบ (GAS)</button>
+      </div>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm border-collapse">
+        <thead><tr class="bg-gray-100 text-gray-600">
+          <th class="p-3 text-left w-36">หมวด</th><th class="p-3 text-left">รายการ</th>
+          <th class="p-3 text-center">สามัญ</th><th class="p-3 text-center">พิเศษ</th><th class="p-3 text-center text-blue-700">รวม</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <p class="px-6 py-3 text-xs text-gray-500 border-t">ช่องตัวเลขแก้ไขได้ · กด "+ เพิ่มแถว" เพื่อเพิ่มรายการซ้ำ/รายการใหม่ในหมวด · ผู้ป่วย 1 คนนับเข้า 1 แถว ตามลำดับ: อิสลาม → แพ้อาหารทะเล → งดสัตว์ปีก → งดดำแดง → ข้าวต้มขาว → เบาหวานเค็มน้อย → เบาหวาน → ไขมันต่ำ → เค็มน้อย → โปรตีนสูง → โปรตีนต่ำ · ยอดรวมทั้งหมดไม่รวมจำนวนไข่</p>
+  </div>
+
+  <div id="warnBox" class="hidden bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-800"></div>
+
+  <div class="bg-white rounded-2xl shadow-sm p-6">
+    <details>
+      <summary class="font-medium cursor-pointer select-none">รายละเอียดรายผู้ป่วยที่อ่านได้ (ตรวจสอบความถูกต้อง)</summary>
+      <div class="overflow-x-auto mt-3 max-h-96 overflow-y-auto">
+        <table class="w-full text-xs"><thead class="sticky top-0 bg-gray-100"><tr>
+          <th class="p-2 text-left">หอผู้ป่วย</th><th class="p-2">ประเภท</th><th class="p-2 text-left">อาหาร</th><th class="p-2 text-left">หมวดที่นับ</th><th class="p-2">ไข่</th><th class="p-2 text-left">ข้อความ</th></tr></thead>
+        <tbody id="detailBody"></tbody></table>
+      </div>
+    </details>
+  </div>
+</div>
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+document.getElementById('currentDate').textContent=new Date().toLocaleDateString('th-TH',{year:'numeric',month:'long',day:'numeric'});
+
+const NORM_RE=/[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E\u25CC\u200B\s]/g;
+const norm=s=>s.replace(/\u0E33/g,'\u0E32').replace(NORM_RE,'');
+function groupLines(items,gap=4){
+  items=[...items].sort((a,b)=>b.y-a.y||a.x-b.x);
+  const lines=[];
+  for(const it of items){
+    const L=lines[lines.length-1];
+    if(L && Math.abs(L.y-it.y)<=gap){L.items.push(it);} else lines.push({y:it.y,items:[it]});
+  }
+  lines.forEach(l=>l.items.sort((a,b)=>a.x-b.x));
+  return lines;
+}
+async function extractPages(pdf){
+  const pages=[];
+  for(let p=1;p<=pdf.numPages;p++){
+    const page=await pdf.getPage(p);
+    const tc=await page.getTextContent();
+    const items=tc.items.filter(i=>i.str.trim()!=='').map(i=>({x:i.transform[4],y:i.transform[5],str:i.str}));
+    pages.push({width:page.getViewport({scale:1}).width,lines:groupLines(items)});
+  }
+  return pages;
+}
+const SKIP=['เตยงชอ','ประเภทเตยง','ตรวจสอบรายการ','มอทเลอก','รายงานสรป','ชอสกล','ชอผสง','ชอผรบ','ตาแหน','วนท'];
+const DIETS=[['tube','อาหารทางสาย'],['npo','งดอาหาร'],['liquid','อาหารเหลว'],['normal','อาหารธรรมดา'],['soft','อาหารออน'],['joke','โจก']];
+function detectDiet(N){
+  let best=null,bi=1e9;
+  for(const [k,w] of DIETS){const i=N.indexOf(w); if(i>=0&&i<bi){bi=i;best=k;}}
+  return best;
+}
+function detectCategory(diet,N){
+  if(/อสลาม/.test(N))return'islam';
+  if(/แพ.{0,8}ทะเล/.test(N))return'seafood';
+  if(N.includes('งดสตวปก'))return'bird';
+  if(N.includes('งดดาแดง'))return'red';
+  if(diet==='soft'&&N.includes('ขาวตมขาว'))return'rice';
+  const dm=N.includes('เบาหวาน'),ls=N.includes('เคมนอย');
+  if(dm&&ls)return'dmsalt';
+  if(dm)return'dm';
+  if(/ไขมนตา|ไขมนนอย|มนนอย/.test(N))return'lowfat';
+  if(ls)return'salt';
+  if(N.includes('โปรตนสง'))return'hiprot';
+  if(N.includes('โปรตนตา'))return'loprot';
+  return'plain';
+}
+function countEggs(N){let s=0;for(const m of N.matchAll(/[ไใ]ข(?:ขาว)?(\d+)ฟอง/g))s+=+m[1];return s;}
+function parseRecords(pages){
+  const records=[];let ward='',cur=null;
+  for(const pg of pages){
+    for(const line of pg.lines){
+      const text=line.items.map(i=>i.str).join(' ').replace(/\s+/g,' ').trim();
+      const wm=text.match(/ตึก\s*:\s*(.+)/);
+      if(wm){const w=wm[1].trim();if(w!==ward){ward=w;cur=null;}continue;}
+      const N=norm(text);
+      if(SKIP.some(k=>N.includes(k))||/^หนา/.test(N))continue;
+      const last=line.items[line.items.length-1];
+      const cnt=(/^\d+$/.test(last.str.trim())&&last.x>pg.width*0.9)?last:null;
+      if(cnt){
+        const rest=line.items.filter(i=>i!==cnt).map(i=>i.str).join(' ');
+        cur={ward,special:norm(ward).startsWith('พเศษ'),qty:+cnt.str.trim()||1,text:rest};
+        records.push(cur);
+      }else if(cur){cur.text+=' '+text;}
+    }
+  }
+  for(const r of records){
+    const N=norm(r.text);
+    r.diet=detectDiet(N);
+    r.cat=(r.diet==='normal'||r.diet==='soft')?detectCategory(r.diet,N):null;
+    r.eggs=(r.diet==='normal'||r.diet==='soft')?countEggs(N)*r.qty:0;
+    r.skipBreakfast=N.includes('งดมอเชา');
+  }
+  return records;
+}
+
+
+// ---------- โครงสร้างตาราง (ตาม Sheet2) ----------
+const $=id=>document.getElementById(id);
+const COMMON=[['plain','ทั่วไป (ไม่มีข้อกำหนด)'],['dm','เบาหวาน'],['hiprot','โปรตีนสูง'],['loprot','โปรตีนต่ำ'],['lowfat','ไขมันต่ำ,มันน้อย'],['salt','เค็มน้อย'],['dmsalt','เบาหวานเค็มน้อย']];
+const TAIL=[['seafood','แพ้อาหารทะเล'],['bird','งดสัตว์ปีก'],['red','งดดำแดง'],['islam','อิสลาม']];
+const GROUPS=[
+  {key:'normal',label:'อาหารธรรมดา',rows:[...COMMON,...TAIL]},
+  {key:'soft',label:'อาหารอ่อน',rows:[...COMMON,['rice','ข้าวต้มขาว'],...TAIL]}
+];
+const SINGLES=[['liquid','อาหารเหลว'],['joke','โจ๊ก'],['egg','เสริมไข่จำนวน (ฟอง)'],['npo','งดน้ำงดอาหาร'],['bd','BD (อาหารทางสาย)']];
+let M=null, records=[], uid=0;
+
+function buildModel(recs){
+  M={groups:{},single:{}};
+  GROUPS.forEach(g=>M.groups[g.key]=g.rows.map(([cat,label])=>({id:++uid,cat,label,v:[0,0],custom:false})));
+  SINGLES.forEach(([k])=>M.single[k]=[0,0]);
+  for(const r of recs){
+    const c=r.special?1:0;
+    if(r.diet==='normal'||r.diet==='soft'){
+      const row=M.groups[r.diet].find(x=>x.cat===r.cat&&!x.custom)||M.groups[r.diet][0];
+      row.v[c]+=r.qty; M.single.egg[c]+=r.eggs;
+    }else if(r.diet==='tube')M.single.bd[c]+=r.qty;
+    else if(M.single[r.diet])M.single[r.diet][c]+=r.qty;
+  }
+}
+const sum2=(arr)=>[0,1].map(c=>arr.reduce((a,v)=>a+(+v[c]||0),0));
+function totals(){
+  const t={};
+  GROUPS.forEach(g=>t[g.key]=sum2(M.groups[g.key].map(r=>r.v)));
+  t.grand=sum2([...GROUPS.map(g=>t[g.key]),M.single.liquid,M.single.joke,M.single.npo,M.single.bd]);
+  return t;
+}
+function numCell(path,c,v){return `<td class="p-1 text-center"><input type="number" min="0" class="num" data-p="${path}" data-c="${c}" value="${v||0}"></td>`;}
+function render(){
+  let h='';
+  GROUPS.forEach(g=>{
+    M.groups[g.key].forEach((r,i)=>{
+      h+=`<tr class="border-b hover:bg-blue-50/40"><td class="p-2 font-medium text-gray-500">${i===0?g.label:''}</td>
+      <td class="p-2">${r.custom?`<div class="flex gap-1"><input class="lbl" data-l="${r.id}" value="${r.label}"><button data-del="${r.id}" class="text-red-500 px-1">✕</button></div>`:r.label}</td>
+      ${numCell(g.key+':'+r.id,0,r.v[0])}${numCell(g.key+':'+r.id,1,r.v[1])}<td class="p-2 text-center" id="rt-${r.id}"></td></tr>`;
+    });
+    h+=`<tr class="border-b"><td></td><td class="p-2"><button data-add="${g.key}" class="text-blue-600 text-xs hover:underline">+ เพิ่มแถว (${g.label})</button></td><td colspan="3"></td></tr>
+    <tr class="bg-gray-50 font-semibold border-b-2"><td></td><td class="p-2">รวม${g.label}</td><td class="p-2 text-center" id="gt-${g.key}-0"></td><td class="p-2 text-center" id="gt-${g.key}-1"></td><td class="p-2 text-center" id="gt-${g.key}-2"></td></tr>`;
+  });
+  SINGLES.forEach(([k,label])=>{
+    h+=`<tr class="border-b"><td></td><td class="p-2">${label}</td>${numCell('s:'+k,0,M.single[k][0])}${numCell('s:'+k,1,M.single[k][1])}<td class="p-2 text-center" id="st-${k}"></td></tr>`;
+  });
+  h+=`<tr class="bg-blue-50 font-bold text-blue-800"><td></td><td class="p-3">รวมยอดทั้งหมด</td><td class="p-3 text-center" id="gt-grand-0"></td><td class="p-3 text-center" id="gt-grand-1"></td><td class="p-3 text-center text-lg" id="gt-grand-2"></td></tr>`;
+  $('tbody').innerHTML=h;
+  refresh();
+}
+function refresh(){
+  const t=totals();
+  [...GROUPS.map(g=>g.key),'grand'].forEach(k=>{$(`gt-${k}-0`).textContent=t[k][0];$(`gt-${k}-1`).textContent=t[k][1];$(`gt-${k}-2`).textContent=t[k][0]+t[k][1];});
+  GROUPS.forEach(g=>M.groups[g.key].forEach(r=>$('rt-'+r.id).textContent=(+r.v[0]||0)+(+r.v[1]||0)));
+  SINGLES.forEach(([k])=>$('st-'+k).textContent=(+M.single[k][0]||0)+(+M.single[k][1]||0));
+}
+$('tbody').addEventListener('input',e=>{
+  const t=e.target;
+  if(t.dataset.p){
+    const [k,id]=t.dataset.p.split(':');const c=+t.dataset.c;
+    if(k==='s')M.single[id][c]=+t.value||0;
+    else M.groups[k].find(r=>r.id==id).v[c]=+t.value||0;
+    refresh();
+  }else if(t.dataset.l){
+    for(const k in M.groups){const r=M.groups[k].find(r=>r.id==t.dataset.l);if(r)r.label=t.value;}
+  }
+});
+$('tbody').addEventListener('click',e=>{
+  const a=e.target.dataset.add,d=e.target.dataset.del;
+  if(a){const arr=M.groups[a];let idx=arr.length;arr.splice(idx,0,{id:++uid,cat:'custom',label:'',v:[0,0],custom:true});render();}
+  if(d){for(const k in M.groups)M.groups[k]=M.groups[k].filter(r=>r.id!=d);render();}
+});
+
+// ---------- อัพโหลด / ประมวลผล ----------
+const uz=$('uploadZone'),fi=$('fileInput');
+uz.onclick=()=>fi.click();
+uz.ondragover=e=>{e.preventDefault();uz.classList.add('drag-active')};
+uz.ondragleave=()=>uz.classList.remove('drag-active');
+uz.ondrop=e=>{e.preventDefault();uz.classList.remove('drag-active');if(e.dataTransfer.files.length)handleFile(e.dataTransfer.files[0])};
+fi.onchange=e=>{if(e.target.files.length)handleFile(e.target.files[0])};
+
+function handleFile(file){
+  if(file.type!=='application/pdf'){Swal.fire({icon:'error',title:'ไฟล์ไม่ถูกต้อง',text:'กรุณาอัพโหลดไฟล์ .pdf เท่านั้น'});return;}
+  uz.classList.add('hidden');$('resultSection').classList.add('hidden');$('loadingIndicator').classList.remove('hidden');
+  const fr=new FileReader();
+  fr.onload=async function(){
+    try{
+      const pdf=await pdfjsLib.getDocument({data:new Uint8Array(this.result)}).promise;
+      const pages=await extractPages(pdf);
+      records=parseRecords(pages);
+      buildModel(records);render();showExtras();
+      $('resultSection').classList.remove('hidden');
+    }catch(err){
+      console.error(err);Swal.fire({icon:'error',title:'เกิดข้อผิดพลาด',text:'ไม่สามารถอ่านไฟล์ PDF ได้'});
+    }
+    $('loadingIndicator').classList.add('hidden');uz.classList.remove('hidden');
+  };
+  fr.readAsArrayBuffer(file);
+}
+const DN={normal:'อาหารธรรมดา',soft:'อาหารอ่อน',joke:'โจ๊ก',liquid:'อาหารเหลว',tube:'อาหารทางสาย',npo:'งดน้ำงดอาหาร'};
+const CN=Object.fromEntries([...COMMON,['rice','ข้าวต้มขาว'],...TAIL]);
+function showExtras(){
+  const wards=new Set(records.map(r=>r.ward));
+  $('metaInfo').textContent=`อ่านได้ ${records.length} รายการ จาก ${wards.size} หอผู้ป่วย`;
+  const w=[];
+  const nd=records.filter(r=>!r.diet);
+  if(nd.length)w.push(`ไม่พบประเภทอาหาร ${nd.length} รายการ (ไม่ถูกนับ): `+nd.map(r=>r.ward+' — '+r.text.slice(0,40)).join(' | '));
+  const sb=records.filter(r=>r.skipBreakfast);
+  if(sb.length)w.push(`พบหมายเหตุ "งดมื้อเช้า" ${sb.length} ราย (ยังนับรวมอยู่ในยอด): `+sb.map(r=>r.text.slice(0,25)).join(' | '));
+  $('warnBox').classList.toggle('hidden',!w.length);
+  $('warnBox').innerHTML=w.map(x=>`<p>⚠ ${x}</p>`).join('');
+  $('detailBody').innerHTML=records.map(r=>`<tr class="border-b"><td class="p-2">${r.ward}</td><td class="p-2 text-center">${r.special?'พิเศษ':'สามัญ'}</td><td class="p-2">${DN[r.diet]||'<span class=text-red-500>ไม่พบ</span>'}</td><td class="p-2">${r.cat?(CN[r.cat]||'ทั่วไป'):'-'}</td><td class="p-2 text-center">${r.eggs||''}</td><td class="p-2 text-gray-500">${r.text}</td></tr>`).join('');
+}
+
+// ---------- Export / GAS ----------
+function buildAOA(){
+  const t=totals(),rows=[['','รายการ','สามัญ','พิเศษ','รวม']];
+  GROUPS.forEach(g=>{
+    M.groups[g.key].forEach((r,i)=>rows.push([i===0?g.label:'',r.label,+r.v[0]||0,+r.v[1]||0,(+r.v[0]||0)+(+r.v[1]||0)]));
+    rows.push(['','รวม',t[g.key][0],t[g.key][1],t[g.key][0]+t[g.key][1]],[]);
+  });
+  SINGLES.forEach(([k,l])=>{const v=M.single[k];rows.push(['',l,v[0],v[1],v[0]+v[1]]);});
+  rows.push(['','รวมยอดทั้งหมด',t.grand[0],t.grand[1],t.grand[0]+t.grand[1]]);
+  return rows;
+}
+$('btnExportExcel').onclick=()=>{
+  if(!M)return;
+  const ws=XLSX.utils.aoa_to_sheet(buildAOA());ws['!cols']=[{wch:16},{wch:28},{wch:10},{wch:10},{wch:10}];
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'สรุปยอด');
+  XLSX.writeFile(wb,`สรุปยอดอาหารผู้ป่วย_${new Date().toISOString().split('T')[0]}.xlsx`);
+};
+$('btnSendGas').onclick=()=>{
+  Swal.fire({title:'ส่งข้อมูลเข้าระบบ?',text:'ระบบจะส่งข้อมูลสรุปยอดไปยัง Google Sheets ผ่าน Apps Script',icon:'question',showCancelButton:true,confirmButtonText:'ใช่, ส่งข้อมูลเลย'}).then(res=>{
+    if(!res.isConfirmed)return;
+    const GAS_URL='YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL';
+    if(GAS_URL.startsWith('YOUR_')){Swal.fire('แจ้งเตือน','กรุณาใส่ URL ของ Google Apps Script (GAS) ในโค้ดก่อนใช้งาน','warning');return;}
+    fetch(GAS_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:new Date().toISOString(),table:buildAOA()})})
+      .then(()=>Swal.fire('สำเร็จ!','ส่งข้อมูลเรียบร้อยแล้ว','success')).catch(()=>Swal.fire('เกิดข้อผิดพลาด','ไม่สามารถส่งข้อมูลได้','error'));
+  });
+};
+</script>
+</body>
+</html>
