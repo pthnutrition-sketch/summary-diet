@@ -73,7 +73,7 @@ input.lbl{width:100%;border:1px solid #e5e7eb;border-radius:.375rem;padding:.15r
         <tbody id="tbody"></tbody>
       </table>
     </div>
-    <p class="px-6 py-3 text-xs text-gray-500 border-t">ช่องตัวเลขแก้ไขได้ · กด "+ เพิ่มแถว" เพื่อเพิ่มรายการซ้ำ/รายการใหม่ในหมวด · ผู้ป่วย 1 คนนับเข้า 1 แถว ตามลำดับความสำคัญ: อิสลาม → แพ้อาหารทะเล (รวมแพ้กุ้ง/ปู/ปลา) → แพ้อาหารอื่น ๆ (แยกตามชนิด) → งดสัตว์ปีก → งดดำแดง → ข้าวต้มขาว → เบาหวานเค็มน้อย → เบาหวาน → ไขมันต่ำ → เค็มน้อย → โปรตีนสูง → โปรตีนต่ำ · ยอดรวมทั้งหมดไม่รวมจำนวนไข่</p>
+    <p class="px-6 py-3 text-xs text-gray-500 border-t">ช่องตัวเลขแก้ไขได้ · กด "+ เพิ่มแถว" เพื่อเพิ่มรายการซ้ำ/รายการใหม่ในหมวด · แถวที่มีสัญลักษณ์ "↳" คือแถวย่อย (sub row) ที่ระบบสร้างอัตโนมัติจากหมายเหตุ เช่น งดผักผลไม้, ไม่เผ็ด, แพ้อาหารอื่น ๆ หรือกรณีมีข้อกำหนดซ้อนกัน เช่น "เบาหวานอิสลาม", "งดดำแดงอิสลาม" · ผู้ป่วยที่มี flag เดียวจะเข้าแถวหลักตามลำดับ: อิสลาม → แพ้อาหารทะเล (รวมกุ้ง/ปู/ปลา) → งดสัตว์ปีก → งดดำแดง → ข้าวต้มขาว → เบาหวานเค็มน้อย → เบาหวาน → ไขมันต่ำ → เค็มน้อย → โปรตีนสูง → โปรตีนต่ำ → งดผักผลไม้ → ไม่เผ็ด · ยอดรวมทั้งหมดไม่รวมจำนวนไข่</p>
   </div>
 
   <div id="warnBox" class="hidden bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-800 space-y-1"></div>
@@ -158,22 +158,43 @@ function detectAllergy(rawText){
   return null;
 }
 
-function detectCategory(diet,rawText){
+/* ป้ายชื่อของแต่ละ flag / ลำดับสำหรับต่อข้อความ (ศาสนาอยู่ท้ายสุด ตามสำนวนที่พบในเอกสารจริง เช่น "เบาหวานอิสลาม") */
+const FLAG_LABELS={bird:'งดสัตว์ปีก',red:'งดดำแดง',rice:'ข้าวต้มขาว',dmsalt:'เบาหวานเค็มน้อย',dm:'เบาหวาน',lowfat:'ไขมันต่ำ,มันน้อย',salt:'เค็มน้อย',hiprot:'โปรตีนสูง',loprot:'โปรตีนต่ำ',noveg:'งดผักผลไม้',nospicy:'ไม่เผ็ด',islam:'อิสลาม'};
+const LABEL_TEXT_ORDER=['bird','red','rice','dmsalt','dm','lowfat','salt','hiprot','loprot','noveg','nospicy','islam'];
+/* ลำดับความสำคัญสำหรับกรณีมี flag เดียว (ใช้เลือกแถวหลักที่มีอยู่แล้ว) */
+const PRIORITY_ORDER=['islam','bird','red','rice','dmsalt','dm','lowfat','salt','hiprot','loprot','noveg','nospicy'];
+
+function detectFlags(diet,rawText){
   const N=norm(rawText);
-  const al=detectAllergy(rawText);
-  if(/อสลาม/.test(N))return{cat:'islam'};
-  if(al) return al;
-  if(N.includes('งดสตวปก'))return{cat:'bird'};
-  if(N.includes('งดดาแดง'))return{cat:'red'};
-  if(diet==='soft'&&N.includes('ขาวตมขาว'))return{cat:'rice'};
+  const flags=[];
+  if(/อสลาม/.test(N))flags.push('islam');
+  if(N.includes('งดสตวปก'))flags.push('bird');
+  if(N.includes('งดดาแดง'))flags.push('red');
+  if(diet==='soft'&&N.includes('ขาวตมขาว'))flags.push('rice');
   const dm=N.includes('เบาหวาน'),ls=N.includes('เคมนอย');
-  if(dm&&ls)return{cat:'dmsalt'};
-  if(dm)return{cat:'dm'};
-  if(/ไขมนตา|ไขมนนอย|มนนอย/.test(N))return{cat:'lowfat'};
-  if(ls)return{cat:'salt'};
-  if(N.includes('โปรตนสง'))return{cat:'hiprot'};
-  if(N.includes('โปรตนตา'))return{cat:'loprot'};
-  return{cat:'plain'};
+  if(dm&&ls)flags.push('dmsalt');
+  else if(dm)flags.push('dm');
+  else if(ls)flags.push('salt');
+  if(/ไขมนตา|ไขมนนอย|มนนอย/.test(N))flags.push('lowfat');
+  if(N.includes('โปรตนสง'))flags.push('hiprot');
+  if(N.includes('โปรตนตา'))flags.push('loprot');
+  if(N.includes('งดผก')||N.includes('งดผลไม'))flags.push('noveg');
+  if(N.includes('ไมเผด')||N.includes('งดเผด'))flags.push('nospicy');
+  return flags;
+}
+/* คืนค่า: {cat:'allergy',label} หรือ {cat:'plain'} หรือ {cat:<flag>} (เดี่ยว) หรือ {cat:'combo',flags,label,parent} (หลาย flag พร้อมกัน -> สร้างแถวย่อยอัตโนมัติ) */
+function detectCategory(diet,rawText){
+  const al=detectAllergy(rawText);
+  if(al) return al; // แพ้อาหาร ถือเป็น flag เดี่ยวเสมอ ไม่รวมกับ flag อื่นเป็น combo
+  const flags=detectFlags(diet,rawText);
+  if(flags.length===0) return {cat:'plain'};
+  if(flags.length===1) return {cat:flags[0]};
+  // มากกว่า 1 flag -> สร้าง/หาแถวย่อย (sub row) แบบผสม
+  const ordered=LABEL_TEXT_ORDER.filter(f=>flags.includes(f));
+  const label=ordered.map(f=>FLAG_LABELS[f]).join('');
+  const parent=PRIORITY_ORDER.find(f=>flags.includes(f)); // แถวหลักที่จะนำแถวย่อยไปแทรกต่อท้าย
+  const comboKey=[...flags].sort().join('+');
+  return {cat:'combo', flags, label, parent, comboKey};
 }
 function countEggs(rawText){
   // นับไข่ (ไข่/ไข่ขาว/ขข. คือไข่ขาว) จากคำที่ตามหลัง "ฟอง": ถ้าระบุ "/มื้อ" หรือ "ต่อมื้อ" ให้คูณ 3 มื้อ/วัน (เช้า/เที่ยง/เย็น)
@@ -271,6 +292,7 @@ function finalize(records){
     if(r.diet==='normal'||r.diet==='soft'){
       const c=detectCategory(r.diet,r.text);
       r.cat=c.cat; r.catLabel=c.label||null;
+      r.comboFlags=c.flags||null; r.comboParent=c.parent||null; r.comboKey=c.comboKey||null;
       r.eggs=countEggs(r.text)*r.qty;
     } else {
       r.cat=null; r.eggs=0;
@@ -303,7 +325,7 @@ function parseAnyPDF(pages){
 // ---------- โครงสร้างตาราง (ตาม Sheet2 + ส่วนขยาย) ----------
 const $=id=>document.getElementById(id);
 const COMMON=[['plain','ทั่วไป (ไม่มีข้อกำหนด)'],['dm','เบาหวาน'],['hiprot','โปรตีนสูง'],['loprot','โปรตีนต่ำ'],['lowfat','ไขมันต่ำ,มันน้อย'],['salt','เค็มน้อย'],['dmsalt','เบาหวานเค็มน้อย']];
-const TAIL=[['seafood','แพ้อาหารทะเล (รวม กุ้ง/ปู/ปลา)'],['bird','งดสัตว์ปีก'],['red','งดดำแดง'],['islam','อิสลาม']];
+const TAIL=[['seafood','แพ้อาหารทะเล (รวม กุ้ง/ปู/ปลา)'],['bird','งดสัตว์ปีก'],['red','งดดำแดง'],['islam','อิสลาม'],['noveg','งดผักผลไม้'],['nospicy','ไม่เผ็ด']];
 const GROUPS=[
   {key:'normal',label:'อาหารธรรมดา',rows:[...COMMON,...TAIL]},
   {key:'soft',label:'อาหารอ่อน',rows:[...COMMON,['rice','ข้าวต้มขาว'],...TAIL]}
@@ -311,10 +333,25 @@ const GROUPS=[
 const SINGLES=[['liquid','อาหารเหลว'],['liquidclear','อาหารเหลวใส'],['joke','โจ๊ก'],['egg','เสริมไข่จำนวน (ฟอง)'],['npo','งดน้ำงดอาหาร'],['bd','BD (อาหารทางสาย)']];
 let M=null, records=[], uid=0, pdfFormat='';
 
+/* แทรกแถวย่อย (sub row) ต่อท้ายแถวหลัก (parent) ทันที ถ้ายังไม่เคยแทรก ให้หาตำแหน่ง parent ก่อนแล้วแทรกถัดจากมัน
+   (รวมถึงแทรกต่อจากแถวย่อยอื่น ๆ ของ parent เดียวกันที่แทรกไปแล้วด้วย เพื่อให้กลุ่มติดกัน) */
+function insertSubRow(groupKey,parentCat,row){
+  const arr=M.groups[groupKey];
+  let idx=-1;
+  for(let i=arr.length-1;i>=0;i--){ if(arr[i].cat===parentCat || (arr[i].sub&&arr[i].parentCat===parentCat)){ idx=i; break; } }
+  if(idx===-1) idx=arr.length-1;
+  arr.splice(idx+1,0,row);
+}
 function findOrCreateAllergyRow(groupKey,label){
   const arr=M.groups[groupKey];
   let row=arr.find(r=>r.cat==='allergy'&&r.label===label);
-  if(!row){ row={id:++uid,cat:'allergy',label,v:[0,0],custom:true,isAllergy:true}; arr.push(row); }
+  if(!row){ row={id:++uid,cat:'allergy',label,v:[0,0],custom:true,isAllergy:true,sub:true,parentCat:'seafood'}; insertSubRow(groupKey,'seafood',row); }
+  return row;
+}
+function findOrCreateComboRow(groupKey,comboKey,label,parentCat){
+  const arr=M.groups[groupKey];
+  let row=arr.find(r=>r.cat==='combo'&&r.comboKey===comboKey);
+  if(!row){ row={id:++uid,cat:'combo',comboKey,label,v:[0,0],custom:true,isCombo:true,sub:true,parentCat:parentCat||'plain'}; insertSubRow(groupKey,parentCat||'plain',row); }
   return row;
 }
 function buildModel(recs){
@@ -326,6 +363,7 @@ function buildModel(recs){
     if(r.diet==='normal'||r.diet==='soft'){
       let row;
       if(r.cat==='allergy'){ row=findOrCreateAllergyRow(r.diet,r.catLabel||'แพ้อื่นๆ'); }
+      else if(r.cat==='combo'){ row=findOrCreateComboRow(r.diet,r.comboKey,r.catLabel,r.comboParent); }
       else { row=M.groups[r.diet].find(x=>x.cat===r.cat&&!x.custom) || M.groups[r.diet][0]; }
       row.v[c]+=r.qty; M.single.egg[c]+=r.eggs;
     }else if(r.diet==='tube')M.single.bd[c]+=r.qty;
@@ -345,8 +383,12 @@ function render(){
   let h='';
   GROUPS.forEach(g=>{
     M.groups[g.key].forEach((r,i)=>{
-      h+=`<tr class="border-b hover:bg-blue-50/40 ${r.isAllergy?'bg-amber-50/40':''}"><td class="p-2 font-medium text-gray-500">${i===0?g.label:''}</td>
-      <td class="p-2">${r.custom?`<div class="flex gap-1"><input class="lbl" data-l="${r.id}" value="${r.label}"><button data-del="${r.id}" class="text-red-500 px-1">✕</button></div>`:r.label}</td>
+      const subCls=r.sub?'bg-amber-50/40':'';
+      const labelHtml=r.custom
+        ? `<div class="flex gap-1 items-center">${r.sub?'<span class="text-gray-400">↳</span>':''}<input class="lbl" data-l="${r.id}" value="${r.label}"><button data-del="${r.id}" class="text-red-500 px-1">✕</button></div>`
+        : (r.sub?`<span class="text-gray-400">↳</span> ${r.label}`:r.label);
+      h+=`<tr class="border-b hover:bg-blue-50/40 ${subCls}"><td class="p-2 font-medium text-gray-500">${i===0?g.label:''}</td>
+      <td class="p-2 ${r.sub?'pl-5 text-gray-600':''}">${labelHtml}</td>
       ${numCell(g.key+':'+r.id,0,r.v[0])}${numCell(g.key+':'+r.id,1,r.v[1])}<td class="p-2 text-center" id="rt-${r.id}"></td></tr>`;
     });
     h+=`<tr class="border-b"><td></td><td class="p-2"><button data-add="${g.key}" class="text-blue-600 text-xs hover:underline">+ เพิ่มแถว (${g.label})</button></td><td colspan="3"></td></tr>
@@ -432,9 +474,11 @@ function showExtras(){
   if(sb.length)w.push(`⚠ พบหมายเหตุ "งดมื้อเช้า" ${sb.length} ราย (ยังนับรวมอยู่ในยอด)`);
   const allergyRows=[];GROUPS.forEach(g=>M.groups[g.key].filter(r=>r.isAllergy).forEach(r=>allergyRows.push(r.label)));
   if(allergyRows.length)w.push(`ℹ พบรายการแพ้อาหารอื่น ๆ นอกเหนือจากอาหารทะเล และแยกเป็นแถวให้อัตโนมัติ: `+[...new Set(allergyRows)].join(', '));
+  const comboRows=[];GROUPS.forEach(g=>M.groups[g.key].filter(r=>r.isCombo).forEach(r=>comboRows.push(r.label)));
+  if(comboRows.length)w.push(`ℹ พบผู้ป่วยที่มีข้อกำหนดซ้อนกันหลายอย่าง (เช่น เบาหวาน+อิสลาม) ระบบแยกเป็นแถวย่อยให้อัตโนมัติ: `+[...new Set(comboRows)].join(', '));
   $('warnBox').classList.toggle('hidden',!w.length);
   $('warnBox').innerHTML=w.map(x=>`<p>${x}</p>`).join('');
-  $('detailBody').innerHTML=records.map(r=>`<tr class="border-b"><td class="p-2">${r.ward}</td><td class="p-2 text-center">${r.special?'พิเศษ':'สามัญ'}</td><td class="p-2">${r.diet?(DN[r.diet]||r.diet):'<span class="text-red-500">ไม่พบ</span>'}</td><td class="p-2">${r.cat==='allergy'?(r.catLabel||''):(r.cat?(CN[r.cat]||'ทั่วไป'):'-')}</td><td class="p-2 text-center">${r.eggs||''}</td><td class="p-2 text-gray-500">${(r.text||'').slice(0,120)}</td></tr>`).join('');
+  $('detailBody').innerHTML=records.map(r=>`<tr class="border-b"><td class="p-2">${r.ward}</td><td class="p-2 text-center">${r.special?'พิเศษ':'สามัญ'}</td><td class="p-2">${r.diet?(DN[r.diet]||r.diet):'<span class="text-red-500">ไม่พบ</span>'}</td><td class="p-2">${(r.cat==='allergy'||r.cat==='combo')?(r.catLabel||''):(r.cat?(CN[r.cat]||'ทั่วไป'):'-')}</td><td class="p-2 text-center">${r.eggs||''}</td><td class="p-2 text-gray-500">${(r.text||'').slice(0,120)}</td></tr>`).join('');
 }
 
 // ---------- Export / GAS ----------
