@@ -24,7 +24,7 @@ input.lbl{width:100%;border:1px solid #e5e7eb;border-radius:.375rem;padding:.15r
 <div class="bg-white rounded-2xl shadow-sm p-6 flex items-center justify-between flex-wrap gap-3">
   <div>
     <h1 class="text-2xl font-semibold text-blue-800">ระบบประมวลผลคำสั่งอาหารผู้ป่วย</h1>
-    <p class="text-gray-500 text-sm mt-1">อัพโหลด PDF สรุปรายการอาหาร</p>
+    <p class="text-gray-500 text-sm mt-1">อัพโหลด PDF สรุปรายการอาหาร (รองรับได้ทั้งไฟล์แบบตารางเดิม และไฟล์ "ใบเบิกอาหารประจำวัน" ทั้ง 2 รูปแบบ)</p>
   </div>
   <div class="bg-blue-100 text-blue-700 px-4 py-2 rounded-lg font-medium">วันที่: <span id="currentDate"></span></div>
 </div>
@@ -79,11 +79,12 @@ input.lbl{width:100%;border:1px solid #e5e7eb;border-radius:.375rem;padding:.15r
   <div id="warnBox" class="hidden bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-800 space-y-1"></div>
 
   <div class="bg-white rounded-2xl shadow-sm p-6">
-    <details>
-      <summary class="font-medium cursor-pointer select-none">รายละเอียดรายผู้ป่วยที่อ่านได้ (ตรวจสอบความถูกต้อง)</summary>
-      <div class="overflow-x-auto mt-3 max-h-96 overflow-y-auto">
+    <details open>
+      <summary class="font-medium cursor-pointer select-none">ตารางตรวจสอบ: รายละเอียดรายผู้ป่วยที่อ่านได้ (คลิกแถวเพื่อดูข้อความเต็ม)</summary>
+      <p class="text-xs text-gray-400 mt-2">แถว <span class="inline-block px-1.5 bg-red-100 text-red-700 rounded">สีแดง</span> คือรายการที่ระบบหาประเภทอาหารไม่เจอ ต้องตรวจสอบ/กรอกยอดเองในตารางสรุปด้านบน</p>
+      <div class="overflow-x-auto mt-3 max-h-[32rem] overflow-y-auto border rounded-lg">
         <table class="w-full text-xs"><thead class="sticky top-0 bg-gray-100"><tr>
-          <th class="p-2 text-left">หอผู้ป่วย</th><th class="p-2">ประเภท</th><th class="p-2 text-left">อาหาร</th><th class="p-2 text-left">หมวดที่นับ</th><th class="p-2">ไข่</th><th class="p-2 text-left">ข้อความ</th></tr></thead>
+          <th class="p-2 text-left">หอผู้ป่วย</th><th class="p-2">ประเภท</th><th class="p-2 text-left">อาหาร</th><th class="p-2 text-left">หมวดที่นับ</th><th class="p-2">ไข่</th><th class="p-2 text-left">หมายเหตุพิเศษ</th><th class="p-2 text-left">ข้อความ (ย่อ)</th></tr></thead>
         <tbody id="detailBody"></tbody></table>
       </div>
     </details>
@@ -145,17 +146,41 @@ function detectDiet(N){
   return best;
 }
 
-/* ---- แพ้อาหาร: ทะเล/กุ้ง/ปู/ปลา/หอย รวมเป็น "แพ้อาหารทะเล", อื่น ๆ แยกเป็นแถวของตัวเอง ---- */
+/* ---- แพ้อาหาร: ทุกชนิดอยู่ใต้หมวดใหญ่ "แพ้อาหาร" โดยมีแถวย่อยระบุว่าแพ้อะไรบ้าง
+   ทะเล/กุ้ง/ปู/ปลา/หอย รวมเป็นแถวย่อยเดียว "อาหารทะเล (กุ้ง/ปู/ปลา)", อื่น ๆ แยกแถวย่อยตามชื่อที่เจอ ---- */
 const SEAFOOD_RE=/แพ้?.{0,10}(ทะเล|กุ้ง|ปู|ปลาหมึก|หอย|ปลา)/;
 const DRUGALLERGY_RE=/แพ้.{0,6}ยา(?!ก)/; // แพ้ยา... (ไม่นับเป็นหมวดอาหาร)
 function detectAllergy(rawText){
   const t=rawText.replace(/\s+/g,' ');
-  if(SEAFOOD_RE.test(t)) return {cat:'seafood'};
+  if(SEAFOOD_RE.test(t)) return {cat:'allergy', label:'อาหารทะเล (กุ้ง/ปู/ปลา)', allergyKey:'seafood'};
   const m=t.match(/แพ้\s*([^\s,()]{1,16})/);
   if(m && !DRUGALLERGY_RE.test('แพ้'+m[1]) && !/^(ยา|แพ้ยา)/.test(m[1])){
-    return {cat:'allergy', label:'แพ้'+m[1].replace(/[.,]+$/,'')};
+    const name=m[1].replace(/[.,]+$/,'');
+    return {cat:'allergy', label:name, allergyKey:'other:'+name};
   }
   return null;
+}
+
+/* ---- หมายเหตุพิเศษ/แปลก ๆ ที่พบบ่อย ให้ระบุเป็นแท็กอ่านง่าย แสดงในตารางตรวจสอบ ---- */
+const NOTE_TAGS=[
+  [/low\s*bac(terial|teria)?/i,'Low bacteria'],
+  [/แยกภาชนะ/,'แยกภาชนะ'],
+  [/ดื้อยา/,'ติดเชื้อดื้อยา (แยกภาชนะ)'],
+  [/ใส่กล่อง/,'ใส่กล่อง'],
+  [/ปกส\.?/,'ประกันสังคม'],
+  [/น[้ำ]\s*ขิง/,'เสริมน้ำขิง'],
+  [/ดูดเสริม/,'ดูดเสริมนม'],
+  [/เพิ่มเกลือ/,'เพิ่มเกลือ'],
+  [/vvip/i,'VVIP'],
+  [/แยกโรค/,'แยกโรค'],
+  [/ไม่รับประทาน/,'มีข้อห้ามอาหารเฉพาะ'],
+  [/งดมื้อเช้า/,'งดมื้อเช้า'],
+  [/ไม่เบิก/,'ไม่เบิก'],
+];
+function detectNotes(rawText){
+  const out=[];
+  for(const [re,label] of NOTE_TAGS){ if(re.test(rawText)) out.push(label); }
+  return out;
 }
 
 /* ป้ายชื่อของแต่ละ flag / ลำดับสำหรับต่อข้อความ (ศาสนาอยู่ท้ายสุด ตามสำนวนที่พบในเอกสารจริง เช่น "เบาหวานอิสลาม") */
@@ -293,12 +318,14 @@ function finalize(records){
       const c=detectCategory(r.diet,r.text);
       r.cat=c.cat; r.catLabel=c.label||null;
       r.comboFlags=c.flags||null; r.comboParent=c.parent||null; r.comboKey=c.comboKey||null;
+      r.allergyKey=c.allergyKey||null;
       r.eggs=countEggs(r.text)*r.qty;
     } else {
       r.cat=null; r.eggs=0;
     }
     if(r.diet==='liquid'){ r.liquidClear=isLiquidClear(r.text); }
     r.skipBreakfast=N.includes('งดมอเชา');
+    r.notes=detectNotes(r.text);
   }
   return records;
 }
@@ -325,7 +352,7 @@ function parseAnyPDF(pages){
 // ---------- โครงสร้างตาราง (ตาม Sheet2 + ส่วนขยาย) ----------
 const $=id=>document.getElementById(id);
 const COMMON=[['plain','ทั่วไป (ไม่มีข้อกำหนด)'],['dm','เบาหวาน'],['hiprot','โปรตีนสูง'],['loprot','โปรตีนต่ำ'],['lowfat','ไขมันต่ำ,มันน้อย'],['salt','เค็มน้อย'],['dmsalt','เบาหวานเค็มน้อย']];
-const TAIL=[['seafood','แพ้อาหารทะเล (รวม กุ้ง/ปู/ปลา)'],['bird','งดสัตว์ปีก'],['red','งดดำแดง'],['islam','อิสลาม'],['noveg','งดผักผลไม้'],['nospicy','ไม่เผ็ด']];
+const TAIL=[['allergy_group','แพ้อาหาร'],['bird','งดสัตว์ปีก'],['red','งดดำแดง'],['islam','อิสลาม'],['noveg','งดผักผลไม้'],['nospicy','ไม่เผ็ด']];
 const GROUPS=[
   {key:'normal',label:'อาหารธรรมดา',rows:[...COMMON,...TAIL]},
   {key:'soft',label:'อาหารอ่อน',rows:[...COMMON,['rice','ข้าวต้มขาว'],...TAIL]}
@@ -342,10 +369,10 @@ function insertSubRow(groupKey,parentCat,row){
   if(idx===-1) idx=arr.length-1;
   arr.splice(idx+1,0,row);
 }
-function findOrCreateAllergyRow(groupKey,label){
+function findOrCreateAllergyRow(groupKey,label,allergyKey){
   const arr=M.groups[groupKey];
-  let row=arr.find(r=>r.cat==='allergy'&&r.label===label);
-  if(!row){ row={id:++uid,cat:'allergy',label,v:[0,0],custom:true,isAllergy:true,sub:true,parentCat:'seafood'}; insertSubRow(groupKey,'seafood',row); }
+  let row=arr.find(r=>r.cat==='allergy'&&r.allergyKey===allergyKey);
+  if(!row){ row={id:++uid,cat:'allergy',label,allergyKey,v:[0,0],custom:true,isAllergy:true,sub:true,parentCat:'allergy_group'}; insertSubRow(groupKey,'allergy_group',row); }
   return row;
 }
 function findOrCreateComboRow(groupKey,comboKey,label,parentCat){
@@ -362,7 +389,7 @@ function buildModel(recs){
     const c=r.special?1:0;
     if(r.diet==='normal'||r.diet==='soft'){
       let row;
-      if(r.cat==='allergy'){ row=findOrCreateAllergyRow(r.diet,r.catLabel||'แพ้อื่นๆ'); }
+      if(r.cat==='allergy'){ row=findOrCreateAllergyRow(r.diet,r.catLabel||'อื่นๆ',r.allergyKey||r.catLabel); }
       else if(r.cat==='combo'){ row=findOrCreateComboRow(r.diet,r.comboKey,r.catLabel,r.comboParent); }
       else { row=M.groups[r.diet].find(x=>x.cat===r.cat&&!x.custom) || M.groups[r.diet][0]; }
       row.v[c]+=r.qty; M.single.egg[c]+=r.eggs;
@@ -468,8 +495,6 @@ function showExtras(){
   const fmtLabel=FMT_LABEL[pdfFormat]||pdfFormat;
   $('metaInfo').textContent=`รูปแบบไฟล์ที่ตรวจพบ: ${fmtLabel} · อ่านได้ ${records.length} รายการ จาก ${wards.size} หอผู้ป่วย`;
   const w=[];
-  const nd=records.filter(r=>!r.diet);
-  if(nd.length)w.push(`⚠ ไม่พบประเภทอาหาร ${nd.length} รายการ (ไม่ถูกนับในตาราง) — ตรวจสอบในตาราง "รายละเอียดรายผู้ป่วย" ด้านล่าง: `+nd.slice(0,8).map(r=>r.ward+' — '+r.text.slice(0,35)).join(' | ')+(nd.length>8?' ...':''));
   const sb=records.filter(r=>r.skipBreakfast);
   if(sb.length)w.push(`⚠ พบหมายเหตุ "งดมื้อเช้า" ${sb.length} ราย (ยังนับรวมอยู่ในยอด)`);
   const allergyRows=[];GROUPS.forEach(g=>M.groups[g.key].filter(r=>r.isAllergy).forEach(r=>allergyRows.push(r.label)));
@@ -478,8 +503,35 @@ function showExtras(){
   if(comboRows.length)w.push(`ℹ พบผู้ป่วยที่มีข้อกำหนดซ้อนกันหลายอย่าง (เช่น เบาหวาน+อิสลาม) ระบบแยกเป็นแถวย่อยให้อัตโนมัติ: `+[...new Set(comboRows)].join(', '));
   $('warnBox').classList.toggle('hidden',!w.length);
   $('warnBox').innerHTML=w.map(x=>`<p>${x}</p>`).join('');
-  $('detailBody').innerHTML=records.map(r=>`<tr class="border-b"><td class="p-2">${r.ward}</td><td class="p-2 text-center">${r.special?'พิเศษ':'สามัญ'}</td><td class="p-2">${r.diet?(DN[r.diet]||r.diet):'<span class="text-red-500">ไม่พบ</span>'}</td><td class="p-2">${(r.cat==='allergy'||r.cat==='combo')?(r.catLabel||''):(r.cat?(CN[r.cat]||'ทั่วไป'):'-')}</td><td class="p-2 text-center">${r.eggs||''}</td><td class="p-2 text-gray-500">${(r.text||'').slice(0,120)}</td></tr>`).join('');
+  const esc=s=>String(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  $('detailBody').innerHTML=records.map((r,i)=>{
+    const noDiet=!r.diet;
+    const rowCls=noDiet?'bg-red-50 hover:bg-red-100':'hover:bg-blue-50/40';
+    const dietTxt=noDiet?'<span class="text-red-600 font-medium">⚠ ไม่พบ</span>':(DN[r.diet]||r.diet);
+    const catTxt=(r.cat==='allergy'||r.cat==='combo')?(r.catLabel||''):(r.cat?(CN[r.cat]||'ทั่วไป'):'-');
+    const noteChips=(r.notes&&r.notes.length)?r.notes.map(n=>`<span class="inline-block px-1.5 py-0.5 mr-1 mb-1 bg-sky-100 text-sky-700 rounded text-[10px]">${esc(n)}</span>`).join(''):'';
+    return `<tr class="border-b cursor-pointer ${rowCls}" data-idx="${i}">
+      <td class="p-2">${esc(r.ward)}</td><td class="p-2 text-center">${r.special?'พิเศษ':'สามัญ'}</td>
+      <td class="p-2">${dietTxt}</td><td class="p-2">${esc(catTxt)}</td><td class="p-2 text-center">${r.eggs||''}</td>
+      <td class="p-2">${noteChips}</td><td class="p-2 text-gray-500">${esc((r.text||'').slice(0,80))}${(r.text||'').length>80?'…':''}</td>
+    </tr>
+    <tr class="hidden bg-gray-50 border-b" data-detail="${i}"><td colspan="7" class="p-3">
+      <div class="text-xs text-gray-600 space-y-1">
+        <p><span class="font-medium">ข้อความเต็มที่อ่านได้:</span></p>
+        <pre class="whitespace-pre-wrap font-sans bg-white border rounded p-2">${esc(r.text)}</pre>
+        <p class="text-gray-400">diet=${r.diet||'-'} · cat=${r.cat||'-'}${r.comboFlags?' · combo=['+r.comboFlags.join(',')+']':''}${r.liquidClear?' · เหลวใส':''}${r.skipBreakfast?' · งดมื้อเช้า':''}</p>
+      </div>
+    </td></tr>`;
+  }).join('');
 }
+// คลิกแถวในตารางตรวจสอบเพื่อดู/ซ่อนข้อความเต็ม (event delegation เพราะตารางสร้างใหม่ทุกครั้งที่อัพโหลด)
+$('detailBody').addEventListener('click',e=>{
+  const tr=e.target.closest('tr[data-idx]');
+  if(!tr)return;
+  const idx=tr.dataset.idx;
+  const detail=$('detailBody').querySelector(`tr[data-detail="${idx}"]`);
+  if(detail) detail.classList.toggle('hidden');
+});
 
 // ---------- Export / GAS ----------
 function buildAOA(){
