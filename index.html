@@ -82,9 +82,20 @@ input.lbl{width:100%;border:1px solid #e5e7eb;border-radius:.375rem;padding:.15r
     <details open>
       <summary class="font-medium cursor-pointer select-none">ตารางตรวจสอบ: รายละเอียดรายผู้ป่วยที่อ่านได้ (คลิกแถวเพื่อดูข้อความเต็ม)</summary>
       <p class="text-xs text-gray-400 mt-2">แถว <span class="inline-block px-1.5 bg-red-100 text-red-700 rounded">สีแดง</span> คือรายการที่ระบบหาประเภทอาหารไม่เจอ ต้องตรวจสอบ/กรอกยอดเองในตารางสรุปด้านบน</p>
-      <div class="overflow-x-auto mt-3 max-h-[32rem] overflow-y-auto border rounded-lg">
+      <div class="flex flex-wrap gap-2 mt-3">
+        <input id="detailSearch" type="text" placeholder="ค้นหา: หอผู้ป่วย / ข้อความ / หมายเหตุ..." class="flex-1 min-w-[180px] border rounded-lg px-3 py-1.5 text-xs">
+        <select id="detailWardFilter" class="border rounded-lg px-2 py-1.5 text-xs"><option value="">ทุกหอผู้ป่วย</option></select>
+        <select id="detailDietFilter" class="border rounded-lg px-2 py-1.5 text-xs">
+          <option value="">ทุกประเภทอาหาร</option>
+          <option value="normal">อาหารธรรมดา</option><option value="soft">อาหารอ่อน</option><option value="tube">อาหารทางสาย</option>
+          <option value="liquid">อาหารเหลว</option><option value="joke">โจ๊ก</option><option value="npo">งดน้ำงดอาหาร</option>
+          <option value="__nodiet__">⚠ หาไม่เจอเท่านั้น</option>
+        </select>
+      </div>
+      <p id="detailCount" class="text-[11px] text-gray-400 mt-1"></p>
+      <div class="overflow-x-auto mt-2 max-h-[32rem] overflow-y-auto border rounded-lg">
         <table class="w-full text-xs"><thead class="sticky top-0 bg-gray-100"><tr>
-          <th class="p-2 text-left">หอผู้ป่วย</th><th class="p-2">ประเภท</th><th class="p-2 text-left">อาหาร</th><th class="p-2 text-left">หมวดที่นับ</th><th class="p-2">ไข่</th><th class="p-2 text-left">หมายเหตุพิเศษ</th><th class="p-2 text-left">ข้อความ (ย่อ)</th></tr></thead>
+          <th class="p-2 text-left">หอผู้ป่วย</th><th class="p-2">ประเภท</th><th class="p-2 text-left">อาหาร</th><th class="p-2 text-left">หมวดที่นับ</th><th class="p-2">ไข่</th><th class="p-2 text-left">เวลาสั่ง</th><th class="p-2 text-left">หมายเหตุพิเศษ</th><th class="p-2 text-left">ข้อความ (ย่อ)</th></tr></thead>
         <tbody id="detailBody"></tbody></table>
       </div>
     </details>
@@ -263,8 +274,11 @@ function parseFormatA(pages){
 }
 
 /* ===================== รูปแบบ B/C: ใบเบิกอาหารประจำวัน (รายคน) ===================== */
+/* สำคัญ: คำว่า "อิสลาม" เป็นได้ทั้งค่าคอลัมน์ศาสนา (เตียง ชื่อ ศาสนา ...) และเป็นคำบอกชนิดอาหาร (อาหารธรรมดา อิสลาม)
+   ถ้าไม่จำกัดตำแหน่ง x จะหลงไปจับบรรทัดบอกชนิดอาหารว่าเป็นบรรทัดระบุตัวตนผู้ป่วยผิด ทำให้ข้อมูลของคนก่อนหน้า/ถัดไปหายหรือสลับกัน
+   คอลัมน์ศาสนาอยู่ที่ x ประมาณ 185-228 เท่านั้น (ก่อนคอลัมน์รายการอาหารที่เริ่ม x~230) */
 function isIdentityLine(items){
-  return items.some(it=>{const n=norm(it.str); return RELIGIONS.includes(n);});
+  return items.some(it=>{ if(it.x<180||it.x>228) return false; const n=norm(it.str); return RELIGIONS.includes(n); });
 }
 function isDietLineStart(items){
   if(!items.length)return false;
@@ -276,9 +290,22 @@ function isDietLineStart(items){
 function xFilterText(items,maxX=430){
   return items.filter(i=>i.x<maxX).map(i=>i.str).join(' ');
 }
+/* ดึงเวลาสั่งอาหาร (คอลัมน์ "เวลาสั่ง": วันที่ + เวลา x ประมาณ 400-430) จากกลุ่มบรรทัดของ 1 คน ถ้ามี */
+function extractOrderTime(lineGroup){
+  const txt=lineGroup.map(l=>l.items.filter(i=>i.x>=398&&i.x<472).map(i=>i.str).join(' ')).join(' ').trim();
+  const m=txt.match(/(\d{1,2}\/\d{1,2}\/\d{4})[^0-9]*(\d{1,2}:\d{2})?/);
+  if(!m) return '';
+  return m[2] ? (m[1]+' '+m[2]+'น.') : m[1];
+}
 function parseFormatBC(pages){
-  const records=[];let ward='';let buf=[];let active=null;
-  const flushToActive=()=>{ if(active){ active.postRaw += ' ' + buf.map(l=>xFilterText(l.items)).join(' '); } buf=[]; };
+  const records=[];let ward='';let buf=[];let active=null;let activeLines=[];
+  const flushToActive=()=>{
+    if(active){
+      active.postRaw += ' ' + buf.map(l=>xFilterText(l.items)).join(' ');
+      if(!active.orderTime){ const t=extractOrderTime(activeLines); if(t) active.orderTime=t; }
+    }
+    buf=[]; activeLines=[];
+  };
   for(const pg of pages){
     for(const line of line_iter(pg)){
       const text=line.items.map(i=>i.str).join(' ').replace(/\s+/g,' ').trim();
@@ -289,8 +316,10 @@ function parseFormatBC(pages){
       if(isSkipLine(N)) continue;
       if(isIdentityLine(line.items)){
         const preRaw = buf.map(l=>xFilterText(l.items)).join(' ');
+        const preLines=buf.slice();
         buf=[];
-        active={ward,special:norm(ward).startsWith('พเศษ'),qty:1,preRaw,postRaw:''};
+        active={ward,special:norm(ward).startsWith('พเศษ'),qty:1,preRaw,postRaw:'',orderTime:''};
+        activeLines=[...preLines,line];
         records.push(active);
         continue;
       }
@@ -300,6 +329,7 @@ function parseFormatBC(pages){
         active=null;
         continue;
       }
+      if(active) activeLines.push(line);
       buf.push(line);
     }
   }
@@ -503,35 +533,63 @@ function showExtras(){
   if(comboRows.length)w.push(`ℹ พบผู้ป่วยที่มีข้อกำหนดซ้อนกันหลายอย่าง (เช่น เบาหวาน+อิสลาม) ระบบแยกเป็นแถวย่อยให้อัตโนมัติ: `+[...new Set(comboRows)].join(', '));
   $('warnBox').classList.toggle('hidden',!w.length);
   $('warnBox').innerHTML=w.map(x=>`<p>${x}</p>`).join('');
-  const esc=s=>String(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-  $('detailBody').innerHTML=records.map((r,i)=>{
+  // ตัวเลือกหอผู้ป่วยในช่องค้นหา (สร้างใหม่ทุกครั้งที่อัพโหลดไฟล์)
+  const wardSel=$('detailWardFilter');
+  wardSel.innerHTML='<option value="">ทุกหอผู้ป่วย</option>'+[...wards].sort().map(w=>`<option value="${w}">${w}</option>`).join('');
+  $('detailSearch').value=''; $('detailDietFilter').value='';
+  renderDetailTable();
+}
+
+const esc=s=>String(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function renderDetailTable(){
+  const q=($('detailSearch').value||'').trim().toLowerCase();
+  const wardF=$('detailWardFilter').value;
+  const dietF=$('detailDietFilter').value;
+  const filtered=[];
+  records.forEach((r,i)=>{
+    if(wardF && r.ward!==wardF) return;
+    if(dietF==='__nodiet__'){ if(r.diet) return; }
+    else if(dietF){ if(r.diet!==dietF) return; }
+    if(q){
+      const hay=(r.ward+' '+(r.text||'')+' '+(r.notes||[]).join(' ')+' '+(r.catLabel||'')).toLowerCase();
+      if(!hay.includes(q)) return;
+    }
+    filtered.push(i);
+  });
+  $('detailCount').textContent=`แสดง ${filtered.length} จากทั้งหมด ${records.length} รายการ`;
+  $('detailBody').innerHTML=filtered.map(i=>{
+    const r=records[i];
     const noDiet=!r.diet;
     const rowCls=noDiet?'bg-red-50 hover:bg-red-100':'hover:bg-blue-50/40';
     const dietTxt=noDiet?'<span class="text-red-600 font-medium">⚠ ไม่พบ</span>':(DN[r.diet]||r.diet);
     const catTxt=(r.cat==='allergy'||r.cat==='combo')?(r.catLabel||''):(r.cat?(CN[r.cat]||'ทั่วไป'):'-');
     const noteChips=(r.notes&&r.notes.length)?r.notes.map(n=>`<span class="inline-block px-1.5 py-0.5 mr-1 mb-1 bg-sky-100 text-sky-700 rounded text-[10px]">${esc(n)}</span>`).join(''):'';
-    return `<tr class="border-b cursor-pointer ${rowCls}" data-idx="${i}">
+    return `<tr class="border-b cursor-pointer ${rowCls}" data-ridx="${i}">
       <td class="p-2">${esc(r.ward)}</td><td class="p-2 text-center">${r.special?'พิเศษ':'สามัญ'}</td>
       <td class="p-2">${dietTxt}</td><td class="p-2">${esc(catTxt)}</td><td class="p-2 text-center">${r.eggs||''}</td>
+      <td class="p-2 text-gray-500 whitespace-nowrap">${esc(r.orderTime||'-')}</td>
       <td class="p-2">${noteChips}</td><td class="p-2 text-gray-500">${esc((r.text||'').slice(0,80))}${(r.text||'').length>80?'…':''}</td>
     </tr>
-    <tr class="hidden bg-gray-50 border-b" data-detail="${i}"><td colspan="7" class="p-3">
+    <tr class="hidden bg-gray-50 border-b" data-detail="${i}"><td colspan="8" class="p-3">
       <div class="text-xs text-gray-600 space-y-1">
         <p><span class="font-medium">ข้อความเต็มที่อ่านได้:</span></p>
         <pre class="whitespace-pre-wrap font-sans bg-white border rounded p-2">${esc(r.text)}</pre>
-        <p class="text-gray-400">diet=${r.diet||'-'} · cat=${r.cat||'-'}${r.comboFlags?' · combo=['+r.comboFlags.join(',')+']':''}${r.liquidClear?' · เหลวใส':''}${r.skipBreakfast?' · งดมื้อเช้า':''}</p>
+        <p class="text-gray-400">เวลาสั่ง=${esc(r.orderTime||'-')} · diet=${r.diet||'-'} · cat=${r.cat||'-'}${r.comboFlags?' · combo=['+r.comboFlags.join(',')+']':''}${r.liquidClear?' · เหลวใส':''}${r.skipBreakfast?' · งดมื้อเช้า':''}</p>
       </div>
     </td></tr>`;
   }).join('');
 }
-// คลิกแถวในตารางตรวจสอบเพื่อดู/ซ่อนข้อความเต็ม (event delegation เพราะตารางสร้างใหม่ทุกครั้งที่อัพโหลด)
+// คลิกแถวในตารางตรวจสอบเพื่อดู/ซ่อนข้อความเต็ม (event delegation เพราะตารางสร้างใหม่ทุกครั้งที่อัพโหลด/กรอง)
 $('detailBody').addEventListener('click',e=>{
-  const tr=e.target.closest('tr[data-idx]');
+  const tr=e.target.closest('tr[data-ridx]');
   if(!tr)return;
-  const idx=tr.dataset.idx;
+  const idx=tr.dataset.ridx;
   const detail=$('detailBody').querySelector(`tr[data-detail="${idx}"]`);
   if(detail) detail.classList.toggle('hidden');
 });
+$('detailSearch').addEventListener('input',renderDetailTable);
+$('detailWardFilter').addEventListener('change',renderDetailTable);
+$('detailDietFilter').addEventListener('change',renderDetailTable);
 
 // ---------- Export / GAS ----------
 function buildAOA(){
